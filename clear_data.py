@@ -66,6 +66,8 @@ def get_portion_video(video):
                 #     break
             cap.release()
             return splitTimes
+
+            
 def splitVideoByTime(splitTimes, video):
     count = 0
     baseName = video.split('.')[0]

@@ -1,0 +1,10 @@
+__pycache__/
+ayushman_kurana/
+checkpoints/
+evaluation/
+flagged/
+inputs/
+results/
+setuptools/
+temp
+wandb/

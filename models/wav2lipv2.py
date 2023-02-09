@@ -3,7 +3,7 @@ from torch import nn
 from torch.nn import functional as F
 import math
 
-from .conv2 import Conv2dTranspose, Conv2d, nonorm_Conv2d
+from .conv import Conv2dTranspose, Conv2d, nonorm_Conv2d
 
 class Wav2Lip(nn.Module):
     def __init__(self):
@@ -115,12 +115,14 @@ class Wav2Lip(nn.Module):
         
         for f in self.face_encoder_blocks:
             x = f(x)
+            # print(f'face_encoder : {x.shape}')
             feats.append(x)
 
         x = audio_embedding
         
         for f in self.face_decoder_blocks:
             x = f(x)
+            # print(f'fd : {x.shape}')
             try:
                 x = torch.cat((x, feats[-1]), dim=1)
             except Exception as e:
@@ -206,3 +208,17 @@ class Wav2Lip_disc_qual(nn.Module):
             x = f(x)
 
         return self.binary_pred(x).view(len(x), -1)
+
+
+
+# ''' Testing the wav2lip network '''
+# audio_sequences = torch.rand(5, 1, 80, 16)#indiv_mels
+# audio_sequences_hq = torch.rand(16, 5, 1, 80, 16)#indiv_mels
+# face_sequences_x = torch.rand(5, 6, 288, 288) #x
+# face_sequences_x_hq = torch.rand(16, 6, 5, 288, 288) #x
+
+# face_sequences_gt = torch.rand(16, 3, 5, 288, 288) #gt
+
+# model = Wav2Lip()
+# print('total trainable params {}'.format(sum(p.numel() for p in model.parameters() if p.requires_grad)))
+# print(model(audio_sequences_hq, face_sequences_x_hq).shape)

@@ -16,6 +16,8 @@ from glob import glob
 import os, random, cv2, argparse
 from hparams import hparams, get_image_list
 
+import wandb
+
 parser = argparse.ArgumentParser(description='Code to train the expert lip-sync discriminator')
 
 parser.add_argument("--data_root", help="Root folder of the preprocessed LRS2 dataset", required=True)
@@ -33,6 +35,21 @@ print('use_cuda: {}'.format(use_cuda))
 
 syncnet_T = 5
 syncnet_mel_step_size = 16
+
+#initializing the wandb logs
+wandb.init(
+    # Set the project where this run will be logged
+    project="syncnet-wav2lip_288x288",  
+    # Track hyperparameters and run metadata
+    config={
+    "syncnet_batch_size": hparams.syncnet_batch_size,
+    "syncnet_lr": hparams.syncnet_lr,
+    "syncnet_wt": hparams.syncnet_wt,
+    "syncnet_checkpoint_interval": hparams.syncnet_checkpoint_interval,
+    "syncnet_eval_interval": hparams.syncnet_eval_interval,
+    "architecture": "288x288 + sync loss + ms-ssim loss",
+    "dataset": "lrs2",
+})
 
 class Dataset(object):
     def __init__(self, split):
@@ -175,6 +192,7 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
                     eval_model(test_data_loader, global_step, device, model, checkpoint_dir)
 
             prog_bar.set_description('Loss: {}'.format(running_loss / (step + 1)))
+            wandb.log({"Train Loss": running_loss / (step + 1)})
 
         global_epoch += 1
 
@@ -202,6 +220,7 @@ def eval_model(test_data_loader, global_step, device, model, checkpoint_dir):
 
         averaged_loss = sum(losses) / len(losses)
         print(averaged_loss)
+        wandb.log({"Eval Loss": averaged_loss})
 
         return
 
@@ -277,3 +296,5 @@ if __name__ == "__main__":
           checkpoint_dir=checkpoint_dir,
           checkpoint_interval=hparams.syncnet_checkpoint_interval,
           nepochs=hparams.nepochs)
+
+    wandb.finish()

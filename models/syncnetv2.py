@@ -2,7 +2,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from .conv2 import Conv2d
+from .conv import Conv2d
 
 class SyncNet_color(nn.Module):
     def __init__(self):
@@ -71,3 +71,16 @@ class SyncNet_color(nn.Module):
 
 
         return audio_embedding, face_embedding
+
+
+# # ''' Testing Syncnet file for face_embedding'''
+# sync_nxt = SyncNet_color()
+# mel = torch.rand(8, 1, 80, 16)
+# audio_sequences = torch.rand(5, 1, 80, 16)#indiv_mels
+# g = torch.rand(8, 15, 144, 288) #x
+
+# print(mel.shape)
+# print(g.shape)
+# a, v = sync_nxt(mel, g)
+# print(a.shape)
+# print(v.shape) #only for face_embedding [1, 4608]

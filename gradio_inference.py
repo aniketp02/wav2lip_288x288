@@ -10,17 +10,18 @@ from models import Wav2Lip
 import platform
 
 import face_detection
+import gradio as gr
+
 parser = argparse.ArgumentParser(description='Inference code to lip-sync videos in the wild using Wav2Lip models')
 
 parser.add_argument('--checkpoint_path', type=str, 
-					help='Name of saved checkpoint to load weights from', required=True)
+					help='Name of saved checkpoint to load weights from', default='checkpoints/best_288x288.pth')
 
 parser.add_argument('--face', type=str, 
-					help='Filepath of video/image that contains faces to use', required=True)
+					help='Filepath of video/image that contains faces to use')
 parser.add_argument('--audio', type=str, 
-					help='Filepath of video/audio file to use as raw audio source', required=True)
-parser.add_argument('--outfile', type=str, help='Video path to save result. See default for an e.g.', 
-								default='results/result_voice.mp4')
+					help='Filepath of video/audio file to use as raw audio source')
+parser.add_argument('--outfile', type=str, help='Video path to save result. See default for an e.g.')
 
 parser.add_argument('--static', type=bool, 
 					help='If True, then use only first video frame for inference', default=False)
@@ -55,8 +56,8 @@ parser.add_argument('--nosmooth', default=False, action='store_true',
 args = parser.parse_args()
 args.img_size = 288
 
-if os.path.isfile(args.face) and args.face.split('.')[1] in ['jpg', 'png', 'jpeg']:
-	args.static = True
+# if os.path.isfile(args.face) and args.face.split('.')[1] in ['jpg', 'png', 'jpeg']:
+# 	args.static = True
 
 def get_smoothened_boxes(boxes, T):
 	for i in range(len(boxes)):
@@ -192,16 +193,16 @@ def load_model(path):
 	model = model.to(device)
 	return model.eval()
 
-def main():
-	if not os.path.isfile(args.face):
+def main(audio_input, video_input):
+	if not os.path.isfile(video_input):
 		raise ValueError('--face argument must be a valid path to video/image file')
 
-	elif args.face.split('.')[1] in ['jpg', 'png', 'jpeg']:
-		full_frames = [cv2.imread(args.face)]
+	elif video_input.split('.')[1] in ['jpg', 'png', 'jpeg']:
+		full_frames = [cv2.imread(video_input)]
 		fps = args.fps
 
 	else:
-		video_stream = cv2.VideoCapture(args.face)
+		video_stream = cv2.VideoCapture(video_input)
 		fps = video_stream.get(cv2.CAP_PROP_FPS)
 
 		print('Reading video frames...')
@@ -228,14 +229,14 @@ def main():
 
 	print ("Number of frames available for inference: "+str(len(full_frames)))
 
-	if not args.audio.endswith('.wav'):
+	if not audio_input.endswith('.wav'):
 		print('Extracting raw audio...')
-		command = 'ffmpeg -y -i {} -strict -2 {}'.format(args.audio, 'temp/temp.wav')
+		command = 'ffmpeg -y -i {} -strict -2 {}'.format(audio_input, 'temp/temp.wav')
 
 		subprocess.call(command, shell=True)
-		args.audio = 'temp/temp.wav'
+		audio_input = 'temp/temp.wav'
 
-	wav = audio.load_wav(args.audio, 16000)
+	wav = audio.load_wav(audio_input, 16000)
 	mel = audio.melspectrogram(wav)
 	# print(mel.shape)
 
@@ -298,15 +299,36 @@ def main():
 	# print('Time for prediction and generating output {}'.format(time.time() - pred_time))
 
 	sync_time = time.time()
+	out_path = 'temp/out.mp4'
 
-	command = 'ffmpeg -y -i {} -i {} -strict -2 -q:v 1 {}'.format(args.audio, 'temp/result.avi', args.outfile)
+	command = 'ffmpeg -y -i {} -i {} -strict -2 -q:v 1 {}'.format(audio_input, 'temp/result.avi', out_path)
 	subprocess.call(command, shell=platform.system() != 'Windows')
 
 	# print('Syncing time {} '.format(time.time() - sync_time))
 	# print("Total time taken {}".format(time.time() - tt))
-	
+	print("generated the first output!!")
+	print("cleaning the /tmp/ directory")
+	cln_tmp = 'rm /tmp/*'
+	subprocess.call(cln_tmp, shell=True)
+	return out_path
+
 
 if __name__ == '__main__':
-	tt = time.time()
-	main()
-	print("Total time taken {}".format(time.time() - tt))
+	print("1")
+	with gr.Blocks() as demo:
+		audio_input = gr.Audio(type="filepath", label="Input Audio", show_label=True)
+		video_input = gr.Video(type="filepath", label="Input Video", show_label=True)
+
+		output_video = gr.Video()
+
+		with gr.Row():
+			btn = gr.Button("Run")
+		btn.click(fn=main, inputs=[audio_input, video_input], outputs = [output_video])
+		# demo = gr.Interface(
+		# 				fn=main,
+		# 				inputs=[audio_input, video_input],
+		# 				outputs = [output_video]
+		# 			)
+	print("2")
+	demo.launch(server_name='0.0.0.0')
+	print("3")

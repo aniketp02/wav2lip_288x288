@@ -17,6 +17,10 @@ from glob import glob
 
 import os, random, cv2, argparse
 from hparams import hparams, get_image_list
+from pytorch_msssim import ssim, ms_ssim, SSIM, MS_SSIM
+import torch.nn.functional as F
+
+import wandb
 
 parser = argparse.ArgumentParser(description='Code to train the Wav2Lip model WITH the visual quality discriminator')
 
@@ -38,6 +42,22 @@ print('use_cuda: {}'.format(use_cuda))
 
 syncnet_T = 5
 syncnet_mel_step_size = 16
+
+#initializing the wandb logs
+wandb.init(
+    # Set the project where this run will be logged
+    project="wav2lip_288x288 visual-disc",  
+    # Track hyperparameters and run metadata
+    config={
+    "batch_size": hparams.batch_size,
+    "learning_rate": hparams.initial_learning_rate,
+    "syncnet_wt": hparams.syncnet_wt,
+    "checkpoint_interval": hparams.checkpoint_interval,
+    "eval_interval": hparams.eval_interval,
+    "disc_wt": hparams.disc_wt,
+    "architecture": "Wav2Lip 288x288 + visual quality disc",
+    "dataset": "lrs2",
+})
 
 class Dataset(object):
     def __init__(self, split):
@@ -177,12 +197,36 @@ def save_sample_images(x, g, gt, global_step, checkpoint_dir):
     for batch_idx, c in enumerate(collage):
         for t in range(len(c)):
             cv2.imwrite('{}/{}_{}.jpg'.format(folder, batch_idx, t), c[t])
+            wandb_img = wandb.Image('{}/{}_{}.jpg'.format(folder, batch_idx, t), caption="{}_{}".format(batch_idx, t))
+            wandb.log({"{}".format(folder): wandb_img})
 
 logloss = nn.BCELoss()
 def cosine_loss(a, v, y):
     d = nn.functional.cosine_similarity(a, v)
     loss = logloss(d.unsqueeze(1), y)
 
+    return loss
+
+def msssim_loss(g, gt):
+    '''
+    gt = (gt.detach().cpu().numpy().transpose(0, 2, 1, 3, 4))
+    gt = torch.from_numpy(gt)
+    g = (g.detach().cpu().numpy().transpose(0, 2, 1, 3, 4))
+    g = torch.from_numpy(g)
+    g.requires_grad_()
+
+    ms_ssim_losses = []
+    # print(g.shape, gt.shape)
+    for id in range(g.shape[0]):
+        ms_ssim_loss = 1 - ms_ssim( g[id], gt[id], data_range=1, size_average=True, win_size=5)
+        #ms_ssim_loss = 1 - multiscale_structural_similarity_index_measure(g[id], gt[id], data_range=1, kernel_size=5)        
+        ms_ssim_losses.append(ms_ssim_loss)
+    
+    averaged_msssim_loss = sum(ms_ssim_losses) / len(ms_ssim_losses)
+    '''
+    g, gt = g.reshape(-1, 3, 288, 288), gt.reshape(-1, 3, 288, 288)
+    loss = 1 - ms_ssim( g, gt, data_range=1, size_average=True, win_size=5)
+    #print(loss)
     return loss
 
 device = torch.device("cuda" if use_cuda else "cpu")
@@ -234,10 +278,10 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
             else:
                 perceptual_loss = 0.
 
-            l1loss = recon_loss(g, gt)
+            l1loss = F.l1_loss(g, gt)
+            msssimloss = msssim_loss(g, gt)
 
-            loss = hparams.syncnet_wt * sync_loss + hparams.disc_wt * perceptual_loss + \
-                                    (1. - hparams.syncnet_wt - hparams.disc_wt) * l1loss
+            loss = hparams.syncnet_wt * sync_loss +  perceptual_loss + msssimloss +  l1loss
 
             loss.backward()
             optimizer.step()
@@ -294,6 +338,10 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
                                                                                         running_perceptual_loss / (step + 1),
                                                                                         running_disc_fake_loss / (step + 1),
                                                                                         running_disc_real_loss / (step + 1)))
+            
+            wandb.log({"Train L1": running_l1_loss / (step + 1), "Train Sync Loss": running_sync_loss / (step + 1), 
+                        "Train Percep": running_perceptual_loss / (step + 1), "Train Fake Loss": running_disc_fake_loss / (step + 1),
+                        "Train Real Loss": running_disc_real_loss / (step + 1)})
 
         global_epoch += 1
 
@@ -328,11 +376,10 @@ def eval_model(test_data_loader, global_step, device, model, disc):
             else:
                 perceptual_loss = 0.
 
-            l1loss = recon_loss(g, gt)
+            l1loss = F.l1_loss(g,gt)
+            msssimloss = msssim_loss(g, gt)
 
-            loss = hparams.syncnet_wt * sync_loss + hparams.disc_wt * perceptual_loss + \
-                                    (1. - hparams.syncnet_wt - hparams.disc_wt) * l1loss
-
+            loss = hparams.syncnet_wt * sync_loss + perceptual_loss + l1loss + msssimloss
             running_l1_loss.append(l1loss.item())
             running_sync_loss.append(sync_loss.item())
             
@@ -348,6 +395,9 @@ def eval_model(test_data_loader, global_step, device, model, disc):
                                                             sum(running_perceptual_loss) / len(running_perceptual_loss),
                                                             sum(running_disc_fake_loss) / len(running_disc_fake_loss),
                                                              sum(running_disc_real_loss) / len(running_disc_real_loss)))
+        wandb.log({"Eval L1": sum(running_l1_loss) / len(running_l1_loss), "Eval Sync loss": sum(running_sync_loss) / len(running_sync_loss), "Eval Percep Loss": sum(running_perceptual_loss) / len(running_perceptual_loss), "Eval Fake Loss": sum(running_disc_fake_loss) / len(running_disc_fake_loss),
+        "Eval Real Loss": sum(running_disc_real_loss) / len(running_disc_real_loss)})
+
         return sum(running_sync_loss) / len(running_sync_loss)
 
 
@@ -418,9 +468,9 @@ if __name__ == "__main__":
     print('total trainable params {}'.format(sum(p.numel() for p in model.parameters() if p.requires_grad)))
     print('total DISC trainable params {}'.format(sum(p.numel() for p in disc.parameters() if p.requires_grad)))
 
-    optimizer = optim.Adam([p for p in model.parameters() if p.requires_grad],
+    optimizer = optim.AdamW([p for p in model.parameters() if p.requires_grad],
                            lr=hparams.initial_learning_rate, betas=(0.5, 0.999))
-    disc_optimizer = optim.Adam([p for p in disc.parameters() if p.requires_grad],
+    disc_optimizer = optim.AdamW([p for p in disc.parameters() if p.requires_grad],
                            lr=hparams.disc_initial_learning_rate, betas=(0.5, 0.999))
 
     if args.checkpoint_path is not None:
@@ -441,3 +491,5 @@ if __name__ == "__main__":
               checkpoint_dir=checkpoint_dir,
               checkpoint_interval=hparams.checkpoint_interval,
               nepochs=hparams.nepochs)
+
+    wandb.finish()
